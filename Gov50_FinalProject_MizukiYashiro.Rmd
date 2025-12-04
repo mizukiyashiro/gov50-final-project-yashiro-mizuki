@@ -1,0 +1,534 @@
+---
+title: "Analyzing The Impact of Chinese Import Competition on the Economic Rhetoric of U.S. Political Parties"
+author: "Mizuki Yashiro"
+date: "2025-12-4"
+output: 
+  pdf_document:
+    latex_engine: xelatex   
+    keep_tex: true
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(fixest)
+library(here)
+
+knitr::opts_knit$set(root.dir = here::here())
+knitr::opts_chunk$set(warning = FALSE, message = TRUE)
+library(tidyverse)
+library(janitor)
+library(readr)
+library(lubridate)
+library(scales)
+library(haven)
+library(tibble)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(fixest)
+library(modelsummary)
+library(manifestoR)
+```
+
+# Abstract
+
+This analysis examines how exposure to Chinese import competition shaped the economic rhetoric of U.S. political parties during the early 2000s. Using data from the MARPOR project and the Autor, Dorn, and Hanson (ADH) China shock dataset (2013), I constructed a reduced form Bartik shift-share exposure measure that summed local trade shocks across commuting zones, weighted by each party’s vote shares. This produced a lagged, party-year indicator of how much each party’s electoral coalition was exposed to rising Chinese imports. I then linked this measure to the share of party manifestos devoted to protectionist and welfare expansion themes between 2000 and 2008. The analysis provides descriptive evidence (due to small sample size) that party rhetoric on economic protection and social compensation shifted in relation to prior trade exposure. My results largely align with theories of compensation politics that connect global shocks to changes in domestic political messaging.
+
+## Introduction
+**Research question:** When states experience higher exposure to Chinese import competition, do the national parties that rely on those voters respond by emphasizing more protectionist and welfare expansionist rhetoric in their national manifestos?
+
+Despite well-established literature linking China-shock exposure to voting behavior, partisan polarization, and local political outcomes, I surprisingly found a precise zero relationship between lagged exposure and national party manifesto content. This null result is itself theoretically informative, suggesting that national platforms may be insulated from geographically localized shocks.
+
+To analyze this question, I merge three major data sources at the state-party-year level:
+
+| **Dataset**                       | **Description**                                                                                                                                                      | **Key Variables**                                   | **Source**                                                 |
+| :-------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------- | :--------------------------------------------------------- |
+| **MEDSL (MIT Election Lab)**      | County-level presidential vote returns (2000-2024), aggregated to the state x party x year level to construct vote-share weights used in the reduced form Bartik exposure measure | `county_fips`, `state_id`, `year`, `party`, `votes` | MIT Election Data and Science Lab                          |
+| **Autor-Dorn-Hanson (ADH, 2013)** | Commuting-zone-level changes in Chinese import penetration, used to capture local exposure to trade shocks across the U.S. labor market                              | `czone`, `d_shock_china`, `period`                  | Autor, Dorn, and Hanson (2013), *American Economic Review* |
+| **MARPOR (Manifesto Project)**    | National party manifestos coded by policy theme, providing measures of protectionist and welfare-expansion rhetoric for each U.S. party-year                         | `per406`, `per504`, `protect_welfare`               | Manifesto Project (MARPOR, 2025 Corpus Version)            |
+
+
+- A manifesto is a political party’s official, election time program that states its priorities, issue emphases, and proposed policy directions. The Manifesto Project (MARPOR) codes each document into topical categories. Higher values for 'per406' indicate more positive protectionist trade framing (topics about tariffs, shielding domestic industry, etc.), while higher values of 'per504' indicate more positive welfare-expansion framing (topics about social insurance, redistribution, etc.). Using these measures, I track how parties’ stated agendas shift across elections as local economic conditions change.
+
+**Key Predictor Method.** Reduced form Bartik shift-share lagged import exposure at the commuting-zone (CZ) level from ADH is vote-weighted to the state x party x year level using county presidential votes (counties to CZs to normalized weights within each state-party-year). Each state-party-year observation is then lagged one election. Exposure is standardized via a safe z-score (returns zeros instead of NA when the standard deviation is 0).
+
+- **Unit of analysis:** state x party x year (51 states/territory x 2 parties x 8 usable post-lag elections).
+
+- **Outcome:** national MARPOR party-year shares (e.g., `per406`, `per504`, `protect_welfare`), attached to each state row in that party-year (standard errors clustered accordingly).
+
+- **ADH periods:** elections 2000 and before map to exposure period 1990-2000, elections after and in the year 2004 map to 2000-2007.
+
+- **Estimation:** fixed-effects OLS with party, year, and state FEs, and SEs clustered by party x year.
+
+- This approach bridges national-level political rhetoric and subnational economic conditions. While U.S. parties issue a single national manifesto per election, their voter coalitions vary geographically in exposure to trade shocks. By weighting exposure by state-level voting patterns, this analysis approximates how localized economic stress translates into national rhetorical shifts in party platforms.
+
+**Methodology Reasoning**: This research design adapts a reduced-form Bartik shift-share framework from regional economics to estimate how local exposure to Chinese import competition affects national party rhetoric. While Bartik shift-share measures are often used as instruments for local economic outcomes such as employment or wage changes, in this project I use the vote-weighted China exposure index directly as a reduced-form regressor. This design treats China’s export surge as a plausibly exogenous shock to the geographic composition of each party’s electoral coalition, rather than attempting to instrument for an intermediate local economic variable. Because the outcome, national party manifestos, is observed only once per party per election year and exhibits no subnational variation, and because the MARPOR platform content is highly centralized, a full IV design is not appropriate for this setting. I instead estimate the reduced form relationship between lagged exposure and national party rhetoric, which allows the data to speak directly to whether the China shock translated into measurable shifts in official party platforms. This method is credible because it exploits exogenous variation in trade shocks across commuting zones, driven largely by China’s global export surge rather than by domestic U.S. policy choices. By weighting those shocks by each party’s state-level vote distribution, the measure links economic exposure to the geographic composition of party electorates, rather than to endogenous platform changes. This is a reasonable approach for three key reasons. 
+
+1. Variation in Chinese import penetration originates abroad and differs sharply across U.S. regions depending on industrial mix, making it plausibly exogenous to domestic partisan messaging.
+
+2. Vote-weighted aggregation captures how parties’ electoral coalitions, not individual voters or firms, experience trade shocks, aligning with theories that parties adjust rhetoric to the interests of their voter bases.
+
+3. Lagging exposure by one election ensures that manifesto changes are interpreted as responses to past economic shocks, not anticipatory behavior or simultaneity.
+
+Together, these design choices make the reduced form Bartik exposure a credible proxy for how localized economic stress is transmitted to national party discourse. This enables me to create interpretable comparisons between Democratic and Republican rhetorical strategies over time.
+
+```{r}
+# Authenticate MARPOR API key
+mp_setapikey("manifesto_key.txt")
+# Print Version/Citation 
+mp_cite()
+# Load full MARPOR dataset
+mp <- mp_maindataset()
+head(mp)
+```
+
+```{r}
+# Create Protection and Welfare variable.
+df <- mp |>
+  select(countryname, party, date, per406, per504) |>
+  mutate(
+    year = as.numeric(substr(date, 1, 4)),
+    protect_welfare = per406 + per504) |>
+  filter(year >= 2000)  
+
+# Barplot
+ggplot(df, aes(x = protect_welfare)) +
+  geom_histogram(bins = 30) +
+  labs(
+    title = "Distribution of Economic Protection & Welfare Rhetoric in Party Manifestos (2000 - Present)",
+    x = "Share of Manifesto Devoted to Protectionism and Welfare (%)",
+    y = "Number of Manifestos",
+    caption = "Data: MARPOR ('per406': Protectionism Positive, 'per504': Welfare Expansion Positive).")
+```
+
+This barplot shows the distribution of the share of party manifestos devoted to protectionist and welfare expansion themes for elections since 2000. The dataset used for this visualization was MARPOR, and particularly the variables 'per406', displaying positive protectionism themes, and 'per504', displaying positive welfare expansion themes. There are two economic themes present. Protectionism refers to an ideology that favors tariffs, trade barriers, or domestic industries. On the other hand, welfare expansionists advocate for expanding the welfare state, social programs, or redistribution. Each of the bars in the plot represents the percentage of a party's manifesto dedicated to these topics. Most manifestos allocate between 5% and 15% of their content to these issues, so while economic protection and social compensation are common talking points in manifestos, they do not dominate most platforms. This pattern suggests that these are standard, background messaging topics for most political parties.
+
+The distribution has a long right tail, with a small number of manifestos devoting 25% to 40% of text to protection and welfare, reflecting cases where parties heavily emphasize positive conversations of protectionism and welfare expansion. A right-skewed, long-tailed distribution means that most parties talk about these topics a little, but these few parties in the outlier manifestos talk about them a lot. Populist, nationalist, or leftist parties that emphasize protectionism or welfare heavily can be in this outlier group. Moreover, crises periods such as post-2008, or the COVID-19 pandemic could also be indicative of these values.
+
+The shape of the distribution suggests that while economic security rhetoric is a typical feature of competition, substantial increases occur only in certain contexts. This aligns with theories of compensation and backlash politics, which argue that exposure to international economic shocks, such as the China trade shock, can increase voter demand for protection and redistribution. If communities more exposed to import competition demand greater economic security, I may observe systematically higher protection and welfare emphasis among parties competing in those areas.
+
+The distribution above suggests that economic protection and welfare rhetoric indeed vary meaningfully across parties and contexts, consistent with theories of compensation politics. To examine this empirically, I next construct an outcome variable that displays the way that political parties frame economic security by combining their protectionist and welfare expansion rhetoric.
+
+To make the relationship more concrete, I also visualize differences by party. This directly addresses the research question: do Democrats and Republicans emphasize protectionism and welfare differently?
+
+```{r}
+# Party Comparison
+party_lookup <- tibble(
+  party_marp = as.integer(c(61320, 61620)),
+  party_label = c("DEMOCRAT", "REPUBLICAN")
+)
+
+df_us <- df |>
+  filter(countryname == "United States") |>
+  mutate(party_marp = as.integer(party)) |>
+  left_join(party_lookup, by = "party_marp")
+
+ggplot(df_us, aes(x = protect_welfare, fill = factor(party))) +
+  geom_histogram(alpha = 0.7, bins = 20, position = "identity") +
+  labs(
+    title = "Economic Protection & Welfare Themes in U.S. Manifestos by Party",
+    x = "Protection and Welfare (%) in Manifesto",
+    y = "Count",
+    fill = "Party")  +
+  scale_fill_manual(values = c("DEMOCRAT" = "#3182bd", "REPUBLICAN" = "#de2d26")) +
+  theme_minimal(base_size = 14)
+```
+
+
+# Groundwork for Reduced Form Bartik Shift-Share Style Exposure
+In this section, I create my outcome variable capturing how political parties frame the concepts of economic protection and welfare. In this step, I construct the key independent variable: state-level, party-weighted exposure to the China trade shock using a reduced form Bartik style shift-share design. This measure captures how much each party’s electoral coalition, weighted by where its voters live, was exposed to rising Chinese import competition in the preceding decade. I first merge county-to-CZ vote weights with the ADH data set on changes in Chinese import penetration, then aggregate to the state x party x year level. This design links geographic variation in trade exposure to shifts in national party rhetoric.
+
+I summed two MARPOR codes: 'per406' (Protectionism Positive) and 'per504' (Welfare State Expansion Positive), then restricted the sample to 2000 onward to align with the period of accelerating Chinese import penetration following China’s accession to the WTO (2001). This produces a data set in which higher values reflect stronger support for protectionist trade policy and expanded welfare state commitments.
+
+```{r}
+manif <- mp|>
+  transmute(
+    party_id = party,
+    country  = countryname,
+    date,
+    year     = as.integer(substr(date, 1, 4)),
+    per406, per504,
+    protect_welfare = per406 + per504) |>
+  filter(year >= 2000 & !is.na(protect_welfare))
+manif 
+```
+
+These are the four inputs for the design:
+
+1. ADH commuting-zone China-shock panel (workfile_china.dta)
+
+2. A county to CZ crosswalk to aggregate county data
+
+3. MEDSL county presidential returns to build party-year weights
+
+4. The MARPOR API connection to later construct the manifesto outcome.
+
+```{r}
+# ADH commuting-zone exposure (workfile_china.dta)
+adh <- read_dta("Desktop/Gov50/Gov50 Final Project/112670-V1/Public-Release-Data/dta/workfile_china.dta")
+
+# County -> CZ crosswalk (czone, cty_fips)
+xwalk <- read_dta("Desktop/Gov50/Gov50 Final Project/cw_cty_czone/cw_cty_czone.dta")
+               
+# County presidential returns (MEDSL)
+votes <- read.csv("Desktop/Gov50/Gov50 Final Project/dataverse_files/countypres_2000-2024.csv")
+
+# Connect to MARPOR main dataset (per406, per504)
+mp_setapikey("manifesto_key.txt")
+mp <- mp_maindataset()
+```
+
+Below, I made a clean key to merge county-level voting data to commuting-zone data. I first renamed the columns so they have consistent names across the datasets, changing 'city_fips' to county_fips, and 'czone' to cz. I then turned both 'county_fips' and 'cz' into integer types, so I can properly join them. If not, I would not be able to join them because one side would be a character, the other would be numeric. I then dropped rows that had a malformed FIPS or CZ code (NA) since it prevents producing strings of NA values when the keys don't match. I then deduplicated using 'distinct(county_fips,cz)' to give me a unique mapping of each county FIPS to a CZ. This makes sure that the merging is predictable, and there is no accidental row-multiplication from duplicate keys, and every kept row has valid keys. This ensures I have a clean 1-to-1 path that joins votes reliably to CZ-level exposure.
+
+```{r}
+fips_col <- "cty_fips"
+czx_col  <- "czone"
+
+xwalk1 <- xwalk |>
+  rename(county_fips = !!fips_col, cz = !!czx_col) |>
+  mutate(
+    county_fips = as.integer(as.character(county_fips)),
+    cz = as.integer(as.character(cz))
+  ) |>
+  filter(!is.na(county_fips), !is.na(cz)) |> 
+  distinct(county_fips, cz)
+```
+
+Below, I built a CZ panel of change in import penetration from China (ADH/China shock), then labeled the periods to match the elections. I picked the column, then standardized the CZ name. Using the grep() function, I auto-selected an exposure variable. It finds the first column that looks like a change in China, import, shock, or trade exposure, then renames it china_exposure. This is important because ADH datasets often include many exposure measures. I'm aiming to grab a value that measures the change in exposure between periods, laying the groundwork for the reduced form Bartik style shifter. I grouped the CZ and made a period index, so within each CZ, I numbered the rows. I also assigned period labels, such as period_index == 1 if it is within the span of 1990-2000, and otherwise, 2000-2007. This mirrors the standard timing for ADH, with one exposure change for 1990-2000 and another for 2000-2007. By merging election outcomes to the previous decade's exposure change, like 2000 votes to 1990-2000 exposure, and 2004/2008 votes to 2000-2007 exposure, I'm looking at the standard lag shift concept where voters might respond to the prior period's rise in import competition with rhetoric about protectionism and the welfare state, and vote shifts. 
+
+```{r}
+cz_col   <- "czone"  
+exp_col  <- grep("^d_.*(china|imp|sh|shock|trade)", names(adh), ignore.case = TRUE, value = TRUE)[1]
+
+adh1 <- adh |>
+  rename(cz = !!cz_col, china_exposure = !!exp_col) |>
+  mutate(cz = as.integer(as.character(cz))) |>
+  group_by(cz) |>
+  mutate(period_index = row_number()) |>
+  ungroup() |>
+  mutate(period = ifelse(period_index == 1, "1990_2000", "2000_2007"))
+```
+
+Below, I first standardized the column names and types. I used names(votes) to find all the column names in my dataset, then intersect() to find the overlap between my dataset column names and the list of possible names. [1] takes the first match. This auto-detects likely column names for country FIPS, year, party, and votes, and renames them into 'country_fips', 'year', 'party', and 'votes'. I also converted 'country_fips' filter integer and uppercase the party labels to make sure the interjoins() later on are reliable. 
+
+```{r}
+v_fips <- intersect(names(votes), c("county_fips","FIPS","fips","countyFIPS"))[1]
+v_year <- intersect(names(votes), c("year","Year","election_year"))[1]
+v_party<- intersect(names(votes), c("party","party_simplified","party_detailed","party_name"))[1]
+v_votes<- intersect(names(votes), c("candidatevotes","votes","totalvotes"))[1]
+```
+
+When I created the `votes1` variable, I filtered the dataset to keep only the two major parties (Democratic and Republican) and all presidential election years from 1992 to 2024. This provides a consistent two-party basis over multiple trade-shock periods while maintaining comparability across decades. I then created a variable `period` that maps each election year to its corresponding ADH exposure window. Elections in or before 2000 map to the 1990-2000 exposure period, while elections from 2004 onward map to the 2000-2007 exposure period. This preserves the reduced form Bartik shift-style share timing logic in which voting behavior and party platforms respond to lagged import exposure rather than concurrent conditions.
+
+```{r}
+votes1 <- votes |>
+  rename(county_fips = !!v_fips, year = !!v_year, party = !!v_party, votes = !!v_votes) |>
+  mutate(
+    county_fips = as.integer(as.character(county_fips)),
+    party = toupper(party)
+  ) |>
+  filter(
+     party %in% c("DEMOCRAT","REPUBLICAN"),
+     year >= 1992, year <= 2024)
+     period <- votes1 |>
+     mutate(period = ifelse(year <= 2000, "1990_2000", "2000_2007"))
+     
+# Create a state identifier
+get_state_id <- function(df) {
+  if ("state_po" %in% names(df)) {
+    df$state_id <- df$state_po
+  } else if ("state" %in% names(df)) {
+    df$state_id <- df$state
+  } else {
+    # derive state FIPS from county FIPS if needed
+    df$state_id <- as.integer(df$county_fips %/% 1000)
+  }
+  return(df)
+}
+votes1       <- get_state_id(votes1)
+votes_period <- votes_period <- votes1 |>
+  mutate(period = ifelse(year <= 2000, "1990_2000", "2000_2007"))
+```
+
+Next, I aggregate votes from the county to the commuting-zone (CZ) level using the `xwalk1` crosswalk. For each party and election year, I sum votes within each CZ and convert them into within-party vote shares, which represent the share of a party’s national votes coming from that region. These weights form the foundation of the reduced form Bartik shift-share measure, indicating how much each CZ contributes to a party’s overall electoral exposure to trade shocks.
+
+```{r}
+# Aggregate votes to the commuting zone (CZ) level:
+# Within each party x year, I sum votes by CZ and convert to within-party vote shares.
+# These vote shares (w_cz) weight each CZ’s contribution to the party’s exposure.
+votes_cz <- votes_period |>
+  inner_join(xwalk1, by="county_fips") |>
+  group_by(year, period, cz, party) |>
+  summarise(votes = sum(votes, na.rm = TRUE), .groups="drop")
+
+w_cz <- votes_cz |>
+  group_by(year, party) |>
+  mutate(weight = votes / sum(votes, na.rm = TRUE)) |>
+  ungroup() |>
+  select(year, period, party, cz, weight)
+```
+
+## Reduced Form Bartik Shift-Style Exposure
+In this step, I construct the key independent variable, party-level exposure to the China trade shock using a reduced form Bartik shift share design. This variable captures how much each party’s electoral coalition, weighted by where its voters live, was exposed to rising Chinese import competition. To build it, I first merge county-to-commuting-zone (CZ) vote weights from U.S. election data with the ADH dataset on changes in Chinese import penetration. This links each CZ’s change in import exposure to the party specific share of national votes originating from that CZ.
+
+'votes_state_cz' is built to weigh state x party x year votes over commuting zones. I attached the CZ codes to each country using 'xwalk1', then aggregated votes to the CZ for each state x party x year x ADH period. Within each state x party x year x ADH period, I computed a weight for each CZ = votes in that CZ divided by the total party votes across CZs in that state & year. These weights sum to 1 over CZs for each state x party x year x ADH period. I did this to get the $w_{s,p,y,cz}$ I need for the shift-share. 'state_party_exp' allows me to compute state x party x year exposure and lags it one election. I joined the ADH table, 'adh1' to attatch China exposure for each CZ and ADH period. For each state x party x year, I took the weighted sum over CZs to get my contemporaneous exposure. Then, I lagged by one election within each state x party to get 'china_exposure_1'. This is so that the manifesto language responds to prior exposure, not same-year China import shock. 
+
+```{r}
+# Lagged party-year Reduced Form Bartik Shift-Style China exposure using vote-weighted CZ shocks: 
+# Reduced Form Bartik Shift-Style (party-weighted) exposure: sum_CZ weight_{party,year,cz} * exposure_{cz,period}
+
+# party code to label mapping
+party_lookup_fix <- tibble(
+  party_marp = as.integer(c(61320L, 61620L)), 
+  party = c("DEMOCRAT", "REPUBLICAN"))
+
+# State level weights over commuting zones
+votes_state_cz <- votes_period |>
+  left_join(xwalk1 |> select(county_fips, cz), by = "county_fips") |>
+  group_by(state_id, party, year, period, cz) |>
+  summarise(votes_cz = sum(votes, na.rm = TRUE), .groups = "drop") |>
+  group_by(state_id, party, year, period) |>
+  mutate(weight = votes_cz / sum(votes_cz, na.rm = TRUE)) |>
+  ungroup()
+
+# Final state x party x year exposure (with lag)
+state_party_exp <- votes_state_cz |>
+  left_join(adh1 |> select(cz, period, china_exposure), by = c("cz","period")) |>
+  mutate(party = toupper(as.character(party))) |>  
+  group_by(state_id, party, year) |>
+  summarise(
+    china_exposure = sum(weight * china_exposure, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(state_id, party, year) |>
+  group_by(state_id, party) |>
+  mutate(china_exposure_lag1 = 
+  lag(china_exposure)) |>
+  ungroup() |>
+  select(state_id, party, year, china_exposure, china_exposure_lag1)
+```
+
+## Merging MARPOR with Reduced-Form Bartik Shift-Style Shares
+
+I merged the state x party x year exposure panel to MARPOR’s party-year outcomes. For each U.S. party-year, MARPOR reports the share of the manifesto devoted to protectionism ('per406') and welfare expansion ('per504'). I also use their sum ('protect_welfare'). I map MARPOR party codes to “DEMOCRAT” and “REPUBLICAN,” then join these outcomes to every state row for the corresponding party-year. This yields a state x party x year dataset where the treatment is the lagged, vote-weighted ADH exposure and the outcomes are manifesto shares replicated across states within a party-year. Standard errors later account for this structure with two-way clustering by state and year.
+
+Below, I kept only U.S. party manifestos and extracted year. I kept only 2 outcome measures, 'per406' and 'per504' plus their sum, and restrichted it to the presedential election years I analyzed. I also mapped MARPOR party codes to "DEMOCRAT"/"REPUBLICAN". 
+
+```{r}
+manif_us_w_party <- mp |>
+  filter(countryname == "United States") |>
+  transmute(
+    party_marp = as.integer(party),
+    year       = as.integer(substr(date, 1, 4)),
+    per406, per504,
+    protect_welfare = per406 + per504) |>
+  filter(year %in% c(1992, 1996, 2000, 2004, 2008, 2012, 2016, 2020, 2024)) |>
+  inner_join(party_lookup_fix, by = "party_marp") |>
+  select(party, year, per406, per504, protect_welfare)
+
+safe_scale <- function(x) {
+  m <- mean(x, na.rm = TRUE)
+  s <- sd(x,   na.rm = TRUE)
+  if (is.na(s) || s == 0) return((x - m) * 0) 
+  (x - m) / s}
+
+analysis_state <- state_party_exp |>
+  inner_join(manif_us_w_party, by = c("party","year")) |>
+  filter(!is.na(china_exposure_lag1)) |>
+  group_by(party, year) |>
+  mutate(exposure_sd = as.numeric(scale(china_exposure_lag1))) |>
+  ungroup()
+```
+
+  
+This follows a standard shift-share design where vote-share weights map parties to local labor markets (commuting zones, CZs) and China exposure comes from ADH CZ data:
+
+\[\text{Exposure}_{s,p,y-1}
+= \sum_{cz} \Big( \underbrace{\text{vote\_share}_{s,p,y,cz}}_{\text{within state x party x year}} \times \underbrace{\text{China\_shock}_{cz,\,t(y)}}_{\text{ADH period mapped to }y} \Big)
+\]
+
+- \(\text{vote\_share}_{s,p,y,cz}\) is the share of party \(p\)’s votes in state \(s\) and election year \(y\) that came from CZ \(cz\) (county votes to CZ to normalized within each state x party x year).
+- \(\text{China\_shock}_{cz,t(y)}\) is the ADH change in Chinese import exposure for CZ \(cz\) during the decade mapped to election \(y\).
+- We then lag one election to obtain \(\text{Exposure}_{s,p,y-1}\), so manifestos are modeled as responses to prior exposure.
+- ADH periods: elections \(\le 2000\) map to 1990-2000, elections \(\ge 2004\) map to 2000-2007.
+
+After computing vote-share weights within each state x party x year, I aggregate the ADH shocks to the state x party x year level, creating `state_party_exp`. I then lag that exposure by one election to form `china_exposure_lag1`. Finally, I attach national MARPOR outcomes (per party-year) to each state row, yielding the analysis dataset `analysis_state`.
+
+# Regression and Interpretation
+
+Estimate fixed-effects models on the state x party x year panel:
+
+\[\text{Outcome}_{s,p,y} = \beta \cdot \text{Exposure}^{(SD)}_{s,p,y-1}
++ \alpha_s + \delta_p + \gamma_y + \varepsilon_{s,p,y}
+\]
+
+where \(\alpha_s\) are state fixed effects, \(\delta_p\) are party fixed effects, and \(\gamma_y\) are year fixed effects. Because MARPOR outcomes are identical within a party-year and then replicated across states, we cluster standard errors by party x year.
+
+A 1-SD increase in lagged exposure is interpreted as a $\beta$ percentage-point change in the share of the manifesto devoted to the outcome.
+
+```{r}
+m_trade_state   <- feols(per406 ~ exposure_sd | party + year + state_id,
+                         data = analysis_state,
+                         cluster = c("state_id", "year"))
+etable(m_trade_state)
+
+m_welfare_state <- feols(per504 ~ exposure_sd | party + year + state_id,
+                         data = analysis_state,
+                         cluster = c("state_id", "year"))
+etable(m_welfare_state)
+```
+
+Both models estimate the association between lagged, vote-weighted Chinese import exposure ('exposure_sd', standardized within party x year) and manifesto rhetoric at the state x party x year level, with fixed effects for party, year, and 'state_id' and standard errors clustered by state and year. Protectionism ('per406'): The coefficient on exposure_sd is -4.06e-16 with a standard error of 1e-6. The Within R2 is 2.22e-16. Substantively, after absorbing party, year, and state fixed effects, the model detects no systematic within-unit association between lagged exposure and protectionist manifesto share. The near-zero coefficient and essentially zero within R² indicate that any remaining variation correlated with 'exposure_sd' is negligible relative to the fixed effects. Welfare expansion ('per504'): The coefficient on exposure_sd is -2.59e-15 with a standard error of 1e-6. The Within R2 is -2.22e-16. As with per406, this implies no detectable within-unit relationship between lagged exposure and welfare-expansion rhetoric once party, year, and state effects are included. In both models, overall $R^2$ values (0.65606 for per406 and 0.81363 for 'per504') are high because the fixed effects capture most of the variation (differences across parties, across years, and across states). The Observations count is 612 in both cases, and standard errors are clustered by state and year, which appropriately accounts for serial correlation within states and common shocks within election years.
+After differencing out national party baselines, national time shocks, and time-invariant state differences, the geographic dispersion of lagged Chinese exposure does not translate into measurable differences in national manifesto text across states. This is consistent with the idea that official party platforms in the U.S. are highly centralized documents. Localized economic shocks may be reflected more in campaign-level speeches, ads, or candidate-specific messaging than in the single national manifesto observed by MARPOR.
+
+The estimates for both 'per406' and 'per504' are extremely close to zero, and importantly, the standard errors and confidence intervals are also extremely small. This does not mean that the model is simply underpowered or noisy. Instead, the estimates produce a precise zero. As it sounds, a precise zero is evidence that the effect size is genuinely near zero, rather than statistically indistinguishable from a wide range of possible values. In this context, the reduced form result strongly suggests that the geographic distribution of China-shock exposure did not translate into measurable differences in national party platforms, even though prior literature has shown that the same shock influenced voting behavior, elite polarization, and local political outcomes. This null is therefore substantively meaningful and surprising.
+
+This precise-zero finding is theoretically notable because it contradicts widespread, historical assumptions in political science that the China shock meaningfully reshaped all domains of American politics. Existing work shows effects on congressional voting, county-level partisan realignment, and elite polarization. My results show that these shifts did not extend to national party manifestos. This suggests that centralized party documents are far less sensitive to localized economic shocks than electoral outcomes or legislative behavior.
+
+# Visualization of lagged Chinese Exposure and Manifesto Shares
+
+```{r}
+ggplot(analysis_state, aes(exposure_sd, protect_welfare, color = party)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    title = "Lagged China Exposure vs. Protection/Welfare (State-level, vote-weighted)",
+    x = "Lagged China Exposure (state-level, SD within party)",
+    y = "Protection + Welfare (%) in Manifesto"
+  ) +
+  theme_minimal(base_size = 14)
+```
+The scatter and smoothed regression lines in this figure visualize how lagged exposure to Chinese imports relates to parties’ rhetorical emphasis on economic protection and welfare. Each point represents a state-party-year observation, weighted by the share of each party’s voters living in trade-exposed regions. The positive slope for Republicans suggests that states more heavily exposed to import competition correspond to slightly higher emphasis on protectionist or welfare-oriented messaging in Republican manifestos. For Democrats, the slope is flatter, indicating weaker responsiveness to localized trade shocks. These results are consistent with theories of economic anxiety and partisan framing, where right-leaning parties strategically adopt protectionist rhetoric to appeal to import-competing constituencies. 
+
+Note: The visual patterns in the smoothed lines do not survive fixed effects estimation, confirming that the national manifesto structure absorbs variation.
+
+```{r}
+# Binned means (deciles), by party
+analysis_state_binned <- analysis_state |>
+  mutate(bin = ntile(exposure_sd, 20)) |>
+  group_by(party, bin) |>
+  summarise(x = mean(exposure_sd), y = mean(protect_welfare), .groups = "drop")
+
+ggplot(analysis_state_binned, aes(x, y, color = party)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    title = "Binned State Means: Exposure vs. Protection/Welfare",
+    x = "Lagged Exposure (binned state means)",
+    y = "Protection + Welfare (%)"
+  ) +
+  theme_minimal(base_size = 14)
+```
+The binned-mean plot further confirms that this pattern is not driven by outliers. The relationship between lagged exposure and manifesto content is monotonic for Republicans, while Democrats exhibit only a mild association. Overall, the visualization provides descriptive support for the idea that the China shock filtered into national party language through geographically exposed state coalitions.
+
+Note: Once again, the visual patterns in the smoothed lines do not survive fixed effects estimation, confirming that the national manifesto structure absorbs variation.
+
+## Separate Outcome Analyses
+Standard errors are clustered at the state and year levels to account for potential serial correlation within states over time and shared national shocks across states within election years. This two-way clustering yields more reliable inference than clustering by party-year, which contained too few clusters for valid estimation.
+
+### A. Trade Protectionism (MARPOR per406)
+```{r}
+# per406 vs exposure (state-level)
+ggplot(analysis_state, aes(exposure_sd, per406, color = party)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Lagged Exposure vs. Protectionism (per406), State-level",
+       x = "Lagged exposure (state-level, SD within party)",
+       y = "Protectionism share (%)") +
+  theme_minimal(base_size = 12)
+
+m_trade_state <- feols(
+  per406 ~ exposure_sd | party + year + state_id,
+  data = analysis_state,
+  cluster = c("state_id", "year")
+)
+etable(m_trade_state)
+```
+The fixed-effects regression estimates the relationship between lagged, vote-weighted Chinese import exposure ('exposure_sd') and the share of party manifestos devoted to protectionist rhetoric (per406). The coefficient on exposure_sd is -4.06e-16 (standard error = 1e-6), with a Within $R^2$ of 2.22e-16. This indicates no measurable within-state-party-year association between lagged exposure and protectionist manifesto content once party, year, and state effects are absorbed. The estimate is effectively zero and statistically insignificant. The overall $R^2$  of 0.65606 is driven almost entirely by the fixed effects, implying that variation in protectionist rhetoric arises from broad party or temporal differences rather than geographic variation in trade exposure. Substantively, these results suggest that localized exposure to Chinese import competition did not influence the degree of protectionist emphasis in national party manifestos.
+
+### B. Welfare Expansion (MARPOR per504)
+```{r}
+# per504 vs exposure (state-level)
+ggplot(analysis_state, aes(exposure_sd, per504, color = party)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Lagged Exposure vs. Welfare Expansion (per504), State-level",
+       x = "Lagged exposure (state-level, SD within party)",
+       y = "Welfare expansion share (%)") +
+  theme_minimal(base_size = 12)
+
+m_welfare_state <- feols(
+  per504 ~ exposure_sd | party + year + state_id,
+  data = analysis_state,
+  cluster = c("state_id", "year"))
+etable(m_welfare_state)
+```
+For welfare expansion rhetoric ('per504'), the coefficient on exposure_sd is -2.59e-15 (standard error = 1e-6), with a Within $R^2$ of -2.22e-16 and an overall $R^2$ of 0.81363. As with the protectionism model, the coefficient is extremely small and statistically insignificant, meaning lagged exposure to Chinese imports is unrelated to changes in welfare-expansion language once party, year, and state fixed effects are included. These results imply that neither dimension of economic rhetoric—protectionist nor redistributive—shows a systematic within-party-state response to variation in prior Chinese import exposure. National-level factors dominate rhetorical shifts, while local trade shocks do not appear to translate into measurable changes in the national party platforms recorded by MARPOR.
+
+Below I started with my analysis dataset, 'analysis_state', and split the data into  separate bins for each party x year using the group_by() function. Within each party x year bin, I took 'china_exposure_lag1', my lagged exposure, and standardized it by subtracting the party x year mean and dividing it by the party x year standard deviation to give me z-scores. The result, 'exposure_sd_py', is comparable within that party x year, with a mean of approximately 0 and standard deviation approximately 1. This helped me preserve state-level variation in each election for each party, making the medians and means comparable within those slices and preventing cross-year or cross-party scaling from washing out variation. I then computed party x year summary statistics with the 'state_summ' variable. i regrouped by each party x year to summarize, and for each party x year, found the median and mean for the standardized exposure and the median shares of protectionism and welfare expansion language in the manifesto (replicated acrross states).
+
+```{r}
+library(knitr)
+
+# Re-standardize exposure within each party x year (off lagged exposure)
+state_summ_data <- analysis_state |>
+  group_by(party, year) |>
+  mutate(exposure_sd_py = as.numeric(scale(china_exposure_lag1))) |>
+  ungroup()
+
+# Party-year summary table
+state_summ <- state_summ_data |>
+  group_by(party, year) |>
+  summarise(
+    med_exposure_sd = median(exposure_sd_py, na.rm = TRUE),
+    mean_exposure_sd = mean(exposure_sd_py, na.rm = TRUE),
+    med_per406 = median(per406, na.rm = TRUE),
+    med_per504 = median(per504, na.rm = TRUE),
+    n_states = n_distinct(state_id),
+    .groups = "drop"
+  ) |>
+  arrange(party, year)
+
+# Calculate start to end deltas for each party
+summ_deltas <- state_summ |>
+  group_by(party) |>
+  summarise(
+    start_year = first(year),
+    end_year   = last(year),
+    Changein_median_exposure = round(last(med_exposure_sd) - first(med_exposure_sd), 2),
+    Changein_protectionism   = round(last(med_per406) - first(med_per406), 2),
+    Changein_welfare         = round(last(med_per504) - first(med_per504), 2),
+    .groups = "drop")
+
+kable(
+  state_summ,
+  caption = "State-party-year medians and means (exposure standardized within party x year).")
+
+kable(
+  summ_deltas,
+  caption = "Start to End Changes in Median Exposure and Manifesto Shares by Party")
+```
+
+The first table reports median and mean values of lagged China exposure (standardized within party x year) and of the two manifesto outcomes, protectionism ('per406') and welfare expansion ('per504'), across all 51 U.S. states and territory for each election year between 2004 and 2024. Because exposure is standardized within each party and election year, the median and mean values hover near zero, indicating that exposure is symmetrically distributed around the party-specific average in each year. Among Democrats, the median share of protectionist rhetoric in manifestos ('per406') increases from 0.220 in 2004 to 1.112 in 2024, a net rise of +0.892 percentage points over the two-decade span. Welfare expansion rhetoric ('per504') grows more strongly, from 7.701 in 2004 to 14.091 in 2024, a +6.390 percentage-point change. This pattern suggests that Democratic platforms modestly increased attention to protectionist issues while placing substantially greater emphasis on redistributive and welfare-state themes over time. Among Republicans, the median share of protectionist rhetoric rises from 0.056 in 2004 to 6.190 in 2024, a much larger change of +6.134 percentage points. Welfare expansion language also increases, though to a lesser degree, from 2.668 in 2004 to 6.905 in 2024, or +4.237 percentage points. These results indicate that Republican manifestos have incorporated a significantly higher level of protectionist content relative to Democrats, consistent with a shift toward more nationalist and anti-import framing following heightened Chinese trade exposure.
+
+The second table summarizes these start-to-end deltas ("Changein"). Both parties exhibit an identical +0.0895 change in standardized exposure between 2004 and 2024, reflecting the gradual rise in lagged import-shock intensity across states. However, the rhetorical adjustments differ sharply by party: Democrats’ increases are concentrated in welfare expansion themes (+6.39 pp) with minimal change in protectionism (+0.89 pp), while Republicans show strong movement in protectionism (+6.13 pp) and more moderate welfare gains (+4.24 pp). Together, these descriptive patterns reinforce the regression results: Republicans appear to translate local import shocks into protectionist rhetoric, while Democrats respond primarily through social-compensatory or welfare framing, highlighting distinct partisan strategies for addressing economic globalization.
+
+# Limitations and Potential Improvements
+
+This analysis uses a reduced-form Bartik exposure measure rather than a “standard” Bartik Instrumental Variable (IV). A traditional Bartik IV would require an endogenous local economic variable such as manufacturing employment changes to be instrumented by China-shock exposure. However, because the MARPOR outcome is a single national manifesto per party-year, replicated across states, the necessary intermediate economic variable is not available at the appropriate level, and the national level outcome structure is not conducive for conducting a full IV strategy. For this reason, the reduced-form approach is more appropriate for the data structure and still yields an interpretable and policy-relevant result. 
+
+With additional time or data, I would extend this project by implementing a full Bartik IV design by collecting state-level economic outcomes such as manufacturing employment declines, unionization, or wage changes and using China-shock exposure as an instrument. This would allow me to identify the causal mechanisms linking global trade shocks to domestic political responses. I would also move beyond national manifestos and analyze subnational party rhetoric like congressional speeches, gubernatorial platforms, local party statements, or campaign communications. These are factors that actually vary across states and would allow the full Bartik exposure measure to operate meaningfully at the geographic level. Both of these extensions would clarify whether the China shock influences political language through local economic decline and whether rhetorical adaptation occurs at subnational levels even if national platforms remain stable.
+
+Second, the MARPOR dataset contains only one manifesto per national party per election, which constrains the amount of true within-party variation. The state-party-year panel artificially replicates national outcomes across subunits, so the effective sample size is smaller than the reported 612 observations. This limits statistical power and may inflate $R^2$ values.
+
+Third, the reduced form Bartik exposure measure relies on presidential vote shares to weight local shocks. This assumes stable partisan coalitions and proportional responsiveness between local economic conditions and national party rhetoric. These are assumptions that may not hold in volatile states.
+
+Fourth, the model’s lag structure assumes parties respond one election later, yet manifesto language may adjust faster or slower depending on institutional cycles or candidate turnover.
+
+Finally, the analysis omits alternative mechanisms, such as media framing or congressional agenda shifts, that could mediate the link between trade exposure and rhetoric.
+
+The absence of manifesto effects contrasts with well-established findings that the China shock affected electoral outcomes and legislative behavior. This suggests that national party platforms may be insulated from localized economic pressures, with trade-related messaging occurring more through candidate speeches, campaign ads, or congressional bill sponsorship rather than formal manifestos.
